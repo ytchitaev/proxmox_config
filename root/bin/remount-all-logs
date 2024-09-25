@@ -1,0 +1,5 @@
+#!/bin/bash
+# Set strict mode
+set -euo pipefail
+
+sudo journalctl -t remount-all

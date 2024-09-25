@@ -1,0 +1,112 @@
+#!/bin/bash
+# Set strict mode
+set -euo pipefail
+
+############
+# To check logs:
+# sudo journalctl -t remount-all
+############
+
+############ FUNCTIONS ############
+
+# logger
+log_message() {
+    local message="$1"
+    local log_type="${2:-info}"
+    
+    # Always log to syslog
+    logger -t remount-all -p "user.${log_type}" "$message"
+    
+    # Echo to stdout (which will be captured in the cron job's output)
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message"
+}
+
+# Function to restart a Proxmox container or VM with retry logic
+restart_proxmox_entity() {
+    local entity_type=$1 # Either "pct" for container or "qm" for VM
+    local entity_id=$2   # The ID of the container or VM
+    local entity_name=$3 # A friendly name for logging
+
+    log_message "Restarting Proxmox $entity_name $entity_id..."
+
+    # Attempt to stop and start with retry logic
+    for attempt in {1..2}; do
+        if $entity_type stop $entity_id; then
+            sleep 3
+            if $entity_type start $entity_id; then
+                log_message "Successfully restarted $entity_name $entity_id."
+                return 0
+            else
+                log_message "Failed to start $entity_name $entity_id. Retrying in 30 seconds..." error
+            fi
+        else
+            log_message "Failed to stop $entity_name $entity_id. Retrying in 30 seconds..." error
+        fi
+
+        sleep 30 # Wait before retrying
+    done
+
+    log_message "Failed to restart $entity_name $entity_id after multiple attempts." error
+    exit 1
+}
+
+# Function to check if mount is responsive
+check_mount() {
+    local mount_point="$1"
+    timeout 10s ls "$mount_point" &>/dev/null
+    return $?
+}
+
+# Function to remount a device
+remount_device() {
+    local mount_point="$1"
+    local uuid="$2"
+    local name="$3"
+    log_message "Attempting to remount $name..."
+    # Try to unmount, forcefully if necessary
+    umount "$mount_point" 2>/dev/null || umount -f "$mount_point" 2>/dev/null || umount -l "$mount_point" 2>/dev/null
+    # Attempt to mount
+    if mount -U "$uuid" "$mount_point" -t ntfs -o rw,exec,defaults,uid=1000,gid=1000,iocharset=utf8,umask=0000,nofail,auto,x-gvfs-show; then
+        if mountpoint -q "$mount_point" && check_mount "$mount_point"; then
+            log_message "Successfully remounted $name."
+            return 0
+        fi
+    fi
+    log_message "Failed to remount $name." error
+    return 1
+}
+
+############ ARGS ############
+
+# Define mount points and UUIDs
+declare -A mounts=(
+    ["nvme4"]="/media/nvme4|52006FBD006FA6A7"
+    ["nvme1"]="/media/nvme1|82CC-C17E"
+)
+
+############ MAIN ############
+
+# Flag to track if any mount needed remounting
+remount_needed=false
+
+# Main loop to check and remount devices
+for device in "${!mounts[@]}"; do
+    IFS='|' read -r mount_point uuid <<< "${mounts[$device]}"
+    if mountpoint -q "$mount_point" && check_mount "$mount_point"; then
+        log_message "$device mount is active and responsive."
+    else
+        remount_needed=true
+        if ! remount_device "$mount_point" "$uuid" "$device"; then
+            log_message "Error: Failed to remount $device. Exiting." error
+            exit 1
+        fi
+    fi
+done
+
+# Only restart if remounting was needed
+if $remount_needed; then
+    restart_proxmox_entity "pct" 104 "container"
+    restart_proxmox_entity "qm" 102 "VM"
+else
+    log_message "All mounts were responsive. No need to restart container and VM."
+fi

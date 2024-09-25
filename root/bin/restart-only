@@ -1,0 +1,69 @@
+#!/bin/bash
+# Set strict mode
+set -euo pipefail
+
+############
+# To check logs:
+# sudo journalctl -t remount-all
+############
+
+############ FUNCTIONS ############
+
+# Function to log messages to syslog and stdout
+log_message() {
+    local message="$1"
+    local log_type="${2:-info}"
+
+    # Log to syslog with the specified log level
+    logger -t restart-only -p "user.${log_type}" "$message"
+
+    # Output to stdout (useful when running manually or from cron)
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$log_type] $message"
+}
+
+# Function to restart a Proxmox container or VM with retry logic
+restart_proxmox_entity() {
+    local entity_type=$1 # Either "pct" for container or "qm" for VM
+    local entity_id=$2   # The ID of the container or VM
+    local entity_name=$3 # A friendly name for logging
+
+    log_message "Restarting Proxmox $entity_name $entity_id..."
+
+    # Attempt to stop and start with retry logic
+    for attempt in {1..2}; do
+        if $entity_type stop $entity_id; then
+            sleep 3
+            if $entity_type start $entity_id; then
+                log_message "Successfully restarted $entity_name $entity_id."
+                return 0
+            else
+                log_message "Failed to start $entity_name $entity_id. Retrying in 30 seconds..." error
+            fi
+        else
+            log_message "Failed to stop $entity_name $entity_id. Retrying in 30 seconds..." error
+        fi
+
+        sleep 30 # Wait before retrying
+    done
+
+    log_message "Failed to restart $entity_name $entity_id after multiple attempts." error
+    exit 1
+}
+
+############ MAIN ############
+
+# Check if pct command is available (for managing containers)
+if ! command -v pct &> /dev/null; then
+    log_message "Error: 'pct' command not found. Ensure you are running this on the Proxmox host." error
+    exit 1
+fi
+
+# Check if qm command is available (for managing virtual machines)
+if ! command -v qm &> /dev/null; then
+    log_message "Error: 'qm' command not found. Ensure you are running this on the Proxmox host." error
+    exit 1
+fi
+
+# restart
+restart_proxmox_entity "pct" 104 "container"
+restart_proxmox_entity "qm" 102 "VM"

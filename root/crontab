@@ -1,0 +1,2 @@
+# every 24 hours and log to file, journal and log file
+0 */24 * * * /usr/local/bin/remount-all >> /var/log/remount-all.log 2>&1

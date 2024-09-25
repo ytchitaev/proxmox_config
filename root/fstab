@@ -1,0 +1,8 @@
+# <file system> <mount point> <type> <options> <dump> <pass>
+/dev/pve/root / ext4 errors=remount-ro,rw 0 1
+UUID=8A6D-84F3 /boot/efi vfat defaults 0 1
+/dev/pve/swap none swap sw 0 0
+proc /proc proc defaults 0 0
+
+UUID=82CC-C17E  /media/nvme1  exfat  rw,exec,defaults,uid=1000,gid=1000,iocharset=utf8,umask=0000,nofail,auto,x-gvfs-show 0 0
+UUID=52006FBD006FA6A7  /media/nvme4  ntfs  rw,exec,defaults,uid=1000,gid=1000,iocharset=utf8,umask=0000,nofail,auto,x-gvfs-show 0 0
